@@ -1,0 +1,144 @@
+---
+title: "task6_A549"
+author: "Nursima Çalık"
+date: "2026-11-09"
+output: html_document
+---
+
+## Import Data
+```{r}
+library(dplyr)
+library(tibble)
+library(SummarizedExperiment)
+library(DESeq2)
+library(ggplot2)
+library(msigdbr)
+library(tidyverse)
+library(DT)
+library(clusterProfiler)
+library(fgsea)
+library(data.table)
+library(ggplot2)
+library(pheatmap)
+
+raw_gene_count_table <- read.table(gzfile("data/GSE224740_Raw_Count_Table_1.txt.gz"), header = TRUE ,sep = "\t")
+selected_counts <- select(raw_gene_count_table, Ensembl_ID:SP_3D_R3)
+
+```
+
+## Create SummarizedEzperiment
+```{r}
+counts_df <- selected_counts %>% remove_rownames %>% column_to_rownames(var ="Ensembl_ID")
+counts_matrix <- as.matrix(counts_df)
+row_data <- data.frame(Ensembl_ID = row.names(counts_matrix))
+
+sample_id <- c("Control_3D_R1", "Control_3D_R2", "Control_3D_R3", "SP_3D_R1", "SP_3D_R2", "SP_3D_R3")
+treatment <- c("control", "control", "control", "propionate",  "propionate", "propionate")
+time_point <- c("3 days", "3 days", "3 days", "3 days", "3 days", "3 days")
+replicate_label <-c("R1","R2","R3", "R1","R2","R3")
+column_data <- data.frame(sample_id, treatment, time_point, replicate_label) 
+column_data <- column_data %>% remove_rownames %>% column_to_rownames(var ="sample_id")
+column_data$sample_id <- rownames(column_data)
+
+sum(is.na(counts_matrix))
+sum(counts_matrix<0)
+all(counts_matrix==floor(counts_matrix))
+sum(duplicated(rownames(counts_matrix)))
+sum(is.na(rownames(counts_matrix)))
+!isTRUE(rownames(counts_matrix)== "")
+identical(colnames(counts_matrix), rownames(column_data)) 
+identical(rownames(counts_matrix), row_data$Ensembl_ID) 
+
+se <- SummarizedExperiment(assays = list(counts = counts_matrix), rowData = row_data, colData = column_data)
+metadata(se)$dataset_accession <- "GSE224740"
+metadata(se)$source <- "NCBI GEO"
+metadata(se)$experimental_description <- "Comparison of RNA-seq between three-days sodium propionate treatment groups and three-days control groups in A549 lung cancer cells"
+
+se
+saveRDS(se, "results/se.RDS")
+```
+
+## Explore samples and Test Differential Expression 
+```{r}
+f_counts_matrix <- assay(se, "counts")
+filtered_counts_matrix <- f_counts_matrix[rowSums(f_counts_matrix >= 10) >= 3, ]
+
+colSums(f_counts_matrix) 
+
+dds <-DESeqDataSetFromMatrix(countData = filtered_counts_matrix, colData = column_data, design = ~ treatment)
+dds$treatment <- relevel(dds$treatment, ref = "control")
+vst <- varianceStabilizingTransformation(dds, blind = TRUE)
+plotPCA(vst, intgroup = "sample_id")+
+  ggtitle("PCA of Control and Propionate Treated A549 Cells")
+
+dds2 <- DESeq(dds)
+result <- results(dds2)
+result
+
+sum(!is.na(result$pvalue))
+sum(result$padj<0.05&result$log2FoldChange>0)
+sum(result$padj<0.05&result$log2FoldChange<0)
+
+plotMA(result, ylim= c(-8,8), alpha = 0.05, main = "MA Plot: Propionate-Treated vs Control")
+
+result_df <- as.data.frame(result) %>%
+  tibble::rownames_to_column(var = "Ensembl_ID")
+write.csv(result_df, "results/Differential-Expression Results.csv", row.names = FALSE)
+
+```
+
+## Perform pathway analysis
+```{r hallmark-plot, fig.width=12, fig.height=14}
+perf_result <- select(result_df, Ensembl_ID, stat)
+perf_result <- perf_result %>% filter(is.finite(stat))
+order_result <- perf_result[order(perf_result$stat, decreasing = TRUE), ]
+vector_result <- tibble::deframe(order_result)
+isTRUE(is.numeric(vector_result))
+sum(duplicated(names(vector_result)))
+
+hallmark <- readRDS("data/hallmark.rds")
+leng_intersect <- length(intersect(names(vector_result), hallmark$ensembl_gene))
+leng_setdiff <- length(setdiff(names(vector_result), hallmark$ensembl_gene))
+hallmark_list <- split(hallmark$ensembl_gene, hallmark$gs_name)
+
+fgsea_res <- fgsea(pathways = hallmark_list, stats = vector_result, minSize = 15, maxSize = 500)
+fgsea_res[order(padj), ]
+fwrite(fgsea_res, file="results/fgsea.tsv", sep="\t", sep2=c("", " ", ""))
+
+order_fgsea_res <- fgsea_res[order(fgsea_res$NES, decreasing = TRUE), ]
+order_fgsea_res <- order_fgsea_res %>% mutate(significance = if_else(padj<0.05, "significance", "not significance"))
+
+ggplot(data = order_fgsea_res, mapping = aes(x= NES, y= reorder(pathway, as.numeric(factor(NES))), color = significance))+
+  geom_point()+
+  labs(title = "Hallmark Pathway Enrichment in Propionate-Treated A549 Cells", x= "NES", y="Pathway")+
+  theme_minimal()+
+  theme(axis.text.y = element_text(size = 7, color = "black"))
+
+emt_genes <- filter(fgsea_res, pathway == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION") %>% pull(leadingEdge) %>% .[[1]]
+apical_junc_genes <- filter(fgsea_res, pathway == "HALLMARK_APICAL_JUNCTION") %>% pull(leadingEdge) %>% .[[1]]
+apical_surface_genes <- filter(fgsea_res, pathway == "HALLMARK_APICAL_SURFACE") %>% pull(leadingEdge) %>% .[[1]]
+
+filtered_emt_wald <- filter(result_df, Ensembl_ID %in% emt_genes) %>% arrange(desc(abs(stat)))
+filtered_api_junc_wald <- filter(result_df, Ensembl_ID %in% apical_junc_genes) %>% arrange(desc(abs(stat)))
+filtered_api_sur_wald <- filter(result_df, Ensembl_ID %in% apical_surface_genes) %>% arrange(desc(abs(stat)))
+top5_emt <- head(filtered_emt_wald, 5)
+top5_api_junc <- head(filtered_api_junc_wald, 5)
+top5_api_sur<- head(filtered_api_sur_wald, 5)
+selected_genes <- c(top5_emt$Ensembl_ID, top5_api_junc$Ensembl_ID, top5_api_sur$Ensembl_ID)
+selected_genes <- unique(selected_genes)
+length(selected_genes)
+vst_matrix <- assay(vst)
+heatmap_matrix <- vst_matrix[selected_genes, ]
+
+gene_functions <- data.frame(gene_functions = rep(c('EMT', 'Apical Junction', 'Apical Surface'), rep(5,3)))
+row.names(gene_functions) <- rownames(heatmap_matrix)
+pheatmap(heatmap_matrix,
+         cluster_rows = TRUE, cluster_cols = FALSE,
+         main = "Heatmap of Selected Leading-Edge Genes in A549 Cells",
+         display_numbers = T,
+         annotation_row = gene_functions)
+
+```      
+
+
+
