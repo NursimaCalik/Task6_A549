@@ -19,13 +19,17 @@ The dataset includes six biological samples:
  -Examine leading-edge genes fram EMT, Apical Junction and Apical Surface pathways.
  -Visualize 15 selected leading-edge genes using a heatmap.
  
- 4.How To Reproduce the Analysis
+4.How To Reproduce the Analysis
   -Install R and Rstudio.
   -Clone or download this repository.
   -Open Task6_A549.Rproj in Rsudio.
   -Restore the required packages using renv::restore()
   -Open task6_A549.Rmd and click Knit to generate HTML report
   
-  5.Data Source
+5.Data Source
   https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE224740 
 
+6. Published Report
+Read the full HTML report online: https://nursimacalik.github.io/Task6_A549/
+
+ 
