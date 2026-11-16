@@ -2,11 +2,28 @@
 title: "task6_A549"
 author: "Nursima Çalık"
 date: "2026-11-09"
-output: html_document
+output: 
+    html_document:
+       fig_caption: true
+       code_folding: hide 
 ---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
 
-## Import Data
-```{r}
+## 1. INTRODUCTION
+### 1.1 Background and Research Question
+The A549 cell line is isolated from a pulmonary adenocarcinoma and this cell line is characterized as representative of Alveolar Type II pneumocytes of the human lung. Researchers propagate these cells in a laboratory and use them in lung cancer studies such as behavior of cancer cells , gene expression and results of various treatments.Another reason of selection of A549 cell line is that A549 cells have epithelial characteristics therefore this cells is proper model to investigate connections between cells and variation of related with Epithelial-Mesenchymal Transition(EMT). Epithelial-Mesenchymal Transition(EMT) is a biologic process that allows a polarized epithelial cell which normally interacts with basement membrane via its basal surface to undergo multiple biochemical changes that enable it to assume a mesenchymal cell phenotype. With EMT, Epithelial cells lose their connection and organisation characteristic and gain more dynamic property. Sodium propionate is the sodium salt of propionic asid which is a sort-chain fatty asid. Propionate can influence cellular processes and gene expression including through epigenetic mechanisms. So it is interesting to investigate how sodium propionate treatment affects gene expression inA549. In this reseach , the main question is whether sodium propinate treatment produce a transcriptional pattern consistent with a more epithelial state in A549 cells. [2-5] 
+
+### 1.1 Initial Biological Expectation
+After reading the article, it is understood that EMT(Epithelial-Mesenchymal Transition) is a process in which epithelial cells gain mesenchymal characteristics. This process is associated with reduced cell adhesion and increased cancer cell migration and invasion. The article suggests that sodium propionate can reduce EMT through epigenetic mechanisms. It can increase E-cadherin expression and decrease the expression of transcription factors involved in EMT. Also it is understood that propionate treatment may be more effective when applied before TGF-B1 stimulation rather than after EMT has already started. Based on this findings, it is expected that Epithelial-related gene expression increases and mesenchymal-related gene expression decreases following propionate treatment. [1]
+
+## 2. METHOD
+### 2.1 Dataset and SummarizedExperiment 
+The dataset was obtained from NCBI GEO (GSE224740) and raw RNA-seq counts table 1 was used. The dataset included six biological samples: three-day sodium propionate treatment and three-day control for A549 cells. There were 3 biological replicates per group.
+
+After importing and selecting the data , raw count data was converted into matrix and SummarizedExperiment object was created. Ensembl gene IDs were stored in the rowData and sample ID, treatment, time point, and replicate label information were stored in colData. The count matrix was checked for missing values, negative counts, correct gene ID alignment. SummarizedExperiment was saved as .RSD file.
+```{r, results="hide"}
 library(dplyr)
 library(tibble)
 library(SummarizedExperiment)
@@ -25,9 +42,7 @@ raw_gene_count_table <- read.table(gzfile("data/GSE224740_Raw_Count_Table_1.txt.
 selected_counts <- select(raw_gene_count_table, Ensembl_ID:SP_3D_R3)
 
 ```
-
-## Create SummarizedEzperiment
-```{r}
+```{r, results='hide'}
 counts_df <- selected_counts %>% remove_rownames %>% column_to_rownames(var ="Ensembl_ID")
 counts_matrix <- as.matrix(counts_df)
 row_data <- data.frame(Ensembl_ID = row.names(counts_matrix))
@@ -39,13 +54,14 @@ replicate_label <-c("R1","R2","R3", "R1","R2","R3")
 column_data <- data.frame(sample_id, treatment, time_point, replicate_label) 
 column_data <- column_data %>% remove_rownames %>% column_to_rownames(var ="sample_id")
 column_data$sample_id <- rownames(column_data)
+write.csv(column_data, "data/sample_metadata.csv", row.names = FALSE)
 
 sum(is.na(counts_matrix))
 sum(counts_matrix<0)
 all(counts_matrix==floor(counts_matrix))
 sum(duplicated(rownames(counts_matrix)))
 sum(is.na(rownames(counts_matrix)))
-!isTRUE(rownames(counts_matrix)== "")
+all(rownames(counts_matrix) != "")
 identical(colnames(counts_matrix), rownames(column_data)) 
 identical(rownames(counts_matrix), row_data$Ensembl_ID) 
 
@@ -58,28 +74,25 @@ se
 saveRDS(se, "results/se.RDS")
 ```
 
-## Explore samples and Test Differential Expression 
-```{r}
+### 2.2 Preprocessing and Differential Expression Analysis
+Fistly, low-expession genes were filtered to reduce noise in the analysis. Genes with at least 10 counts in at least 3 samples were kept for further analysis. Library sizes also checked by calculating the total raw counts for each sample. Then a DESeqDataSet object was created using the filtered count matrix and sample meta data with treatment as the only veriable in the design. The control group was set as the reference. Variance Stabilizing Transformation (VST) was applied to the DEseqDataSet object for reducing the dependence of variance on mean expression levels. Then, Principal Component Analysis (PCA) was performed using the transformed data to examine differences and similarities between the six samples.After all, Differential Expression Analysis was performed using DESeq2. Genes with a Benjamini-Hochberg adjusted p-value below 0.05 were considered statistically significant. Upregulated and downregulated genes were counted separately based pn positive and negative log2 fold changes. The differential expression results were visualized using an MA plot and the complete differential expression results were saved as a CSV file.
+```{r, results='hide'}
 f_counts_matrix <- assay(se, "counts")
 filtered_counts_matrix <- f_counts_matrix[rowSums(f_counts_matrix >= 10) >= 3, ]
 
-colSums(f_counts_matrix) 
+
 
 dds <-DESeqDataSetFromMatrix(countData = filtered_counts_matrix, colData = column_data, design = ~ treatment)
 dds$treatment <- relevel(dds$treatment, ref = "control")
 vst <- varianceStabilizingTransformation(dds, blind = TRUE)
-plotPCA(vst, intgroup = "sample_id")+
-  ggtitle("PCA of Control and Propionate Treated A549 Cells")
+
+
 
 dds2 <- DESeq(dds)
 result <- results(dds2)
 result
 
-sum(!is.na(result$pvalue))
-sum(result$padj<0.05&result$log2FoldChange>0)
-sum(result$padj<0.05&result$log2FoldChange<0)
 
-plotMA(result, ylim= c(-8,8), alpha = 0.05, main = "MA Plot: Propionate-Treated vs Control")
 
 result_df <- as.data.frame(result) %>%
   tibble::rownames_to_column(var = "Ensembl_ID")
@@ -87,8 +100,9 @@ write.csv(result_df, "results/Differential-Expression Results.csv", row.names = 
 
 ```
 
-## Perform pathway analysis
-```{r hallmark-plot, fig.width=12, fig.height=14}
+### 2.3 Hallmark Gene Set Enrichment Analysis (GSEA)
+For Gene Set Enrichment Analysis (GSEA), Ensembl gene IDs and Wald statistics were extracted from the DESeq2 results. Genes with finite Wald statistics were retained and ranked in descending order according to their signed Wald statistics. All genes with finite Wald statistics were included in the ranking regardless of their statictical significant. Duplicate gene IDs were checked. Then,Human Hallmark gene sets from MSigDB version 2026.1Hs were used. The gene sets were loaded from the provided hallmark.rsd file and gene IDs were compared to identify matching and non-matching genes. The gene sets were organized by pathway. GSEA was performed using the fgsea package. The complete enrichment results were saved as a .tsv file. This table includes normalized enrichment scores (NES), adjusted p-values and leading-edge genes. 
+```{r, results='hide'}
 perf_result <- select(result_df, Ensembl_ID, stat)
 perf_result <- perf_result %>% filter(is.finite(stat))
 order_result <- perf_result[order(perf_result$stat, decreasing = TRUE), ]
@@ -102,18 +116,12 @@ leng_setdiff <- length(setdiff(names(vector_result), hallmark$ensembl_gene))
 hallmark_list <- split(hallmark$ensembl_gene, hallmark$gs_name)
 
 fgsea_res <- fgsea(pathways = hallmark_list, stats = vector_result, minSize = 15, maxSize = 500)
-fgsea_res[order(padj), ]
 fwrite(fgsea_res, file="results/fgsea.tsv", sep="\t", sep2=c("", " ", ""))
+```
 
-order_fgsea_res <- fgsea_res[order(fgsea_res$NES, decreasing = TRUE), ]
-order_fgsea_res <- order_fgsea_res %>% mutate(significance = if_else(padj<0.05, "significance", "not significance"))
-
-ggplot(data = order_fgsea_res, mapping = aes(x= NES, y= reorder(pathway, as.numeric(factor(NES))), color = significance))+
-  geom_point()+
-  labs(title = "Hallmark Pathway Enrichment in Propionate-Treated A549 Cells", x= "NES", y="Pathway")+
-  theme_minimal()+
-  theme(axis.text.y = element_text(size = 7, color = "black"))
-
+### 2.4 Leading-Edge Gene Selection And Heatmap
+Leading-Edge genes were excracted from 3 Hallmark pathways: Epithelial-Mesenchymal Transition (EMT), Apical Junction, Apical Surface. These genes were matched with the DESeq2 results and ranked by the absolute value of their Wald statistics. The top 5 genes from each pathway were selected resulting in 15 unique genes. The VST expression values of these genes were extracted for all 6 samples to prepare a heatmap. The selected genes were used as rows while the 6 biological samples were used as columns. The heatmap was generated without row scaling. Genes were clustered by expression similarity while the sample order was kept unchanged. Row annotations indicated the pathway from which each gene was selected.
+```{r}
 emt_genes <- filter(fgsea_res, pathway == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION") %>% pull(leadingEdge) %>% .[[1]]
 apical_junc_genes <- filter(fgsea_res, pathway == "HALLMARK_APICAL_JUNCTION") %>% pull(leadingEdge) %>% .[[1]]
 apical_surface_genes <- filter(fgsea_res, pathway == "HALLMARK_APICAL_SURFACE") %>% pull(leadingEdge) %>% .[[1]]
@@ -126,10 +134,57 @@ top5_api_junc <- head(filtered_api_junc_wald, 5)
 top5_api_sur<- head(filtered_api_sur_wald, 5)
 selected_genes <- c(top5_emt$Ensembl_ID, top5_api_junc$Ensembl_ID, top5_api_sur$Ensembl_ID)
 selected_genes <- unique(selected_genes)
-length(selected_genes)
 vst_matrix <- assay(vst)
 heatmap_matrix <- vst_matrix[selected_genes, ]
+```
 
+## 3. RESULTS 
+### 3.1 Data Quality and PCA
+The initial count matrix contained 61,541 genes and 6 samples. No missing or negative count value were detected and all counts were integers. After filtering low-expression genes, 17,450 genes remained for further analysis. Library sizes ranged from approximately 15.4 million to 20.6 million counts. The library sizes of the propionate-treated samples were closer to each other than those of the control samples. No sample had an unusually low library size. As shown in Figure 1, the control and propionate-treated samples were clearly separated along PC1 which explained 99% of the variance. Biological replicates within each group were closer to each other and no clear outlier was observed.
+
+```{r, fig.cap="Figure 1. PCA of VST-transformed genes expression data from control and sodium propionate-treated A549 cells  "}
+colSums(f_counts_matrix) 
+
+plotPCA(vst, intgroup = "sample_id")+
+  ggtitle("PCA of Control and Propionate Treated A549 Cells")
+```
+
+
+### 3.2 Differential Expression Results
+A total of 17,450 genes were tasted for differential expression. Based on a Benjamini-Hochberg adjusted p-value below 0.05, 4,655 genes were significantly upregulated and 4.251 genes were significantly downregulated following sodium propionate treatment These results show that more than half of the tested genes exhibited either increased or decreased expression following propionate treatment compared to control group.
+As shown in Figure 2, statistically significant genes that were blue points were observed with both positive and negative log2 fold change values. Genes with lower mean normalized counts showes a wider distribution of log2 fold change values, while genes with higher mean normalized counts tended to have log2 fold change values closer to zero.
+
+```{r, fig.cap= "Figure 2. MA plot of differential gene expression between propionate-treated and control group. Blue points represent statistically significant genes (adjusted p-value < 0.05), while grey points represent genes not identified as statistically significant."}
+sum(!is.na(result$pvalue))
+sum(result$padj<0.05&result$log2FoldChange>0)
+sum(result$padj<0.05&result$log2FoldChange<0)
+
+plotMA(result, ylim= c(-8,8), alpha = 0.05, main = "MA Plot: Propionate-Treated vs Control")
+```
+
+### 3.3 Hallmark Pathway Enrichment Results
+Following the differential expression analysis, GSEA was performed to investigate the biological processes associated with changes in gene expression after propionate treatment. 3,675 genes of the 17.450 ranked genes were found in the Hallmark gene sets and 13,775 gene were not included in these gene sets.
+A total of 50 Hallmark pathways were analyzed and 33 of them showed statistically significant enrichment (adjust p-value <0.05). Positive NES values indicate enrichment towards the propionate-treated group and negative NES values indicate enrichment towards the control group.
+As shown in Figure 3, Apical junction, Epithelial-Mesenchymal Transition (EMT), and Apical Surface had the highest positive NES value. In contrast, E2F Targets, G2M Checkpoint and MYC Target V1 showed the strongest negative enrichment. All six gene sets showed statistically significant enrichment. Apical Junction, EMT and Apical surface were selected for further investigation because of their relevance to epithelial identity.  
+```{r hallmark-plot, fig.width=12, fig.height=14, fig.cap="Figure 3. Hallmark gene set enrichment results in propionate-treated A549 cells compared to control cells. Turquoise points represent statistically significant enrichment (adjusted p-value below 0.05) and red points represent non-significant enrichment. "}
+leng_intersect
+leng_setdiff
+
+order_fgsea_res <- fgsea_res[order(fgsea_res$NES, decreasing = TRUE), ]
+order_fgsea_res <- order_fgsea_res %>% mutate(significance = if_else(padj<0.05, "significance", "not significance"))
+table(order_fgsea_res$significance)
+
+ggplot(data = order_fgsea_res, mapping = aes(x= NES, y= reorder(pathway, as.numeric(factor(NES))), color = significance))+
+  geom_point()+
+  labs(title = "Hallmark Pathway Enrichment in Propionate-Treated A549 Cells", x= "NES", y="Pathway")+
+  theme_minimal()+
+  theme(axis.text.y = element_text(size = 7, color = "black"))
+```
+
+### 3.4 Leading-Edge Genes and Heatmap 
+To further investigate the enrichment results, 15 leading-edge genes were selected from EMT, Apical Junction and Apical Surface. As shown in Figure 4, all selected genes showed higher VST-transformed expression values in the propionate treatment group. than in the control group. Biological replicates within each group showed similar expression patterns. 
+```{r, fig.cap=" Figure 4. Heatmap of 15 selected leading-edge genes across six A549 samples.Colors represent VST-transformed expression values without row scaling. Row annotations indicate the pathway from which each gene was selected."}
+length(selected_genes)
 gene_functions <- data.frame(gene_functions = rep(c('EMT', 'Apical Junction', 'Apical Surface'), rep(5,3)))
 row.names(gene_functions) <- rownames(heatmap_matrix)
 pheatmap(heatmap_matrix,
@@ -137,8 +192,80 @@ pheatmap(heatmap_matrix,
          main = "Heatmap of Selected Leading-Edge Genes in A549 Cells",
          display_numbers = T,
          annotation_row = gene_functions)
+```
 
-```      
+## 4. DISCUSSION
+### 4.1 Overall Findings and Consistency of Results
+The PCA results showed a clear separation between the control and propionate-treated groups while biological replicates within each group showed similar pattern. Approximately 51% of the tested genes showed statistically significant changes in expression. GSEA showed that these changes were associated with several biological processes. All 15 selected leading-edge genes showed higher expression in the treatment group which was consistent with the positive enrichment of the 3 selected gene sets. However, since these genes were selected based on the GSEA results, the heatmap does not provide independent validation.
 
+### 4.2 Biological Interpretation of the Results
+The positive enrichment of Apical Junction and Apical Surface supports our initial expectations regarding epithelial identity. In particular, the increased expression of CDH1 and CLDN4 which are associated with cell-to-cell adhesion and tight junctions supports these findings. However, contrary to our expectations, the EMT gene set showed positive enrichment. Three of the selected EMT leading-edge genes (COL1A1, COL5A1, and COL6A2) are associated with the extracellular matrix. This suggests that the positive enrichment of EMT may be partly related to changes in extracellular matrix-related gene expression. Furthermore, the negative enrichment of E2F Targets, G2M Checkpoint, and MYC Targets V1 suggests that propionate treatment may reduce cancer cell proliferation. However, reduced cell proliferation cannot be directly confirmed by this analysis. Overall, our results indicate that propionate treatment produces a transcriptional pattern that is partially consistent with a more epithelial state. [6]
+
+### 4.3 Comparison with The Published Study
+The published study reported that propionate treatment increased E-cadherin expression and reinforced epithelial features. The positive enrichment of Apical Junction and Apical Surface in our analysis is consistent with these findings. However, the EMT gene set showed positive enrichment, contrary to our expectations. Interestingly, not all EMT-related genes showed decreased expression in the original study. Furthermore, although proliferation-related gene sets showed negative enrichment in our analysis, the authors did not observe a change in cell proliferation. This highlights that changes in gene expression do not necessarily reflect changes in cellular behavior. Overall, our findings partially support the results of the published study.[1]
+
+### 4.4 Limitations 
+This study has several limitations. The small sample size with only three biological replicates in each group may limit the statistical power of the analysis. Only the A549 cell line was analyzed and the results may not be generalizable to other types of lung cancer. Furthermore, the analysis was limited to three days of treatment, and the long-term effects of propionate were not evaluated. Although RNA-seq analysis reveals changes in gene expression, only RNA-seq data are not sufficient to confirm changes in EMT, cell proliferation, or metastasis. The potential effects of the tumor microenvironment were also not considered. Future studies using more biological replicates, different cell lines, longer treatment periods, and additional experimental methods could provide further evidence.
+
+## CONCLUSION
+This study investigated the effects of propionate treatment on gene expression in A549 cells. The positive enrichment of Apical Junction and Apical Surface supported our initial biological expectations, while the positive enrichment of EMT was unexpected. Overall, our findings suggest that propionate treatment produces a transcriptional pattern that is partially consistent with a more epithelial state.
+
+
+## RESOURCES
+[1] Ramesh, V., Gollavilli, P. N., Pinna, L., Siddiqui, M. A., Turtos, A. M., Napoli, F., Antonelli, Y., Leal-Egaña, A., Havelund, J. F., Jakobsen, S. T., Boiteux, E. L., Volante, M., Faergeman, N. J., Jensen, O. N., Siersbaek, R., Somyajit, K., & Ceppi, P. (2023). Propionate reinforces epithelial identity and reduces aggressiveness of lung carcinoma. EMBO molecular medicine, 15(12), e17836. https://doi.org/10.15252/emmm.202317836 
+
+[2] https://www.culturecollections.org.uk/products/cell-cultures/ecacc-cell-line-profiles/a549/ 
+
+[3] Foster, K. A., Oster, C. G., Mayer, M. M., Avery, M. L., & Audus, K. L. (1998). Characterization of the A549 cell line as a type II pulmonary epithelial cell model for drug metabolism. Experimental cell research, 243(2), 359–366. https://doi.org/10.1006/excr.1998.4172 
+
+[4] Kalluri, R., & Weinberg, R. A. (2009). The basics of epithelial-mesenchymal transition. The Journal of clinical investigation, 119(6), 1420–1428. https://doi.org/10.1172/JCI39104 
+
+[5] https://examine.com/faq/what-is-propionate/?srsltid=AYCX9vIA2F8ILDx-0tT7NTL6kVijxsbp4G-ptYteoKGqT3eOwoLx_clV
+
+[6] The Human Protein Atlas. Available at: https://www.proteinatlas.org/ (Accessed: November 16,2026).
+
+[7]	https://forum.posit.co/t/read-txt-gz-file/35724 
+
+[8]	https://www.datanovia.com/learn/programming/data-wrangling/select-columns-in-r 
+
+[9]	https://www.bioconductor.org/packages/devel/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html 
+
+[10]	https://stackoverflow.com/questions/10113933/how-to-check-if-each-element-in-a-vector-is-integer-or-not-in-r 
+
+[11]	https://www.geeksforgeeks.org/r-language/saverds-and-readrds-functions-in-r/ 
+
+[12]	https://www.biostars.org/p/9569749/ 
+
+[13]	https://www.youtube.com/watch?v=E9QS4dRqWS8 
+
+[14]	https://www.rdocumentation.org/packages/DESeq/versions/1.24.0/topics/plotPCA 
+
+[15]	https://stackoverflow.com/questions/29511215/how-can-i-convert-row-names-into-the-first-column 
+
+[16]	https://notchbio.app/blog/how-to-make-volcano-plots-ma-plots-rna-seq-r/ 
+
+[17]	https://www.rdocumentation.org/packages/dplyr/versions/1.0.10/topics/filter 
+
+[18]	https://www.geeksforgeeks.org/r-language/how-to-sort-r-dataframe-by-the-contents-of-a-column/ 
+
+[19]	https://stackoverflow.com/questions/19265172/converting-two-columns-of-a-data-frame-to-a-named-vector 
+
+[20]	https://biostatsquid.com/easy-msigdbr-in-r/ 
+
+[21]	https://www.geeksforgeeks.org/r-language/how-to-find-common-elements-from-multiple-vectors-in-r/ 
+
+[22]	https://stackoverflow.com/questions/46147955/how-do-you-create-a-named-list-from-a-grouped-dataframe 
+
+[23]	https://www.biostars.org/p/410796/ 
+
+[24]	https://stackoverflow.com/questions/73042478/how-to-sort-parameters-on-y-axis-based-on-a-category-in-ggplot-r 
+
+[25]	https://r-statistics.co/dplyr-pull-in-R.html 
+
+[26]	https://stackoverflow.com/questions/68778252/how-to-select-rows-from-a-matrix-in-r 
+
+[27]	https://biostatsquid.com/step-by-step-heatmap-tutorial-with-pheatmap/#step2 
+
+[28]	https://stackoverflow.com/questions/28782654/r-finding-unmatched-column-names-of-data-frames 
 
 
